@@ -20,8 +20,8 @@ parser.add_argument('--max-episode-length', type=int, default=250,
                     help='maximum length of an episode (default: 250)')
 parser.add_argument('--env-name', default='CartPole-v0',
                     help='environment to train on (default: CartPole-v0)')
-parser.add_argument('--hidden-units', default=[12, 128], type=list,
-                    help='hidden units in policy (default: [256,128])')
+parser.add_argument('--hidden-units', default=[12], type=list,
+                    help='hidden units in policy (default: [12])')
 parser.add_argument('--target', default=195, type=int,
                     help='Solved at target (default: 195)')
 
@@ -40,7 +40,7 @@ if __name__ == '__main__':
     plt.title(f"Reinforce: {args.env_name} over {args.num_episodes} episodes")
     plt.plot(episodes, episode_rewards, label="episode reward")
     plt.plot(episodes, mean_rewards, label="mean reward")
-    plt.xlabel("Reward")
-    plt.ylabel("episode")
+    plt.ylabel("Reward")
+    plt.xlabel("Episode")
     plt.legend()
     plt.savefig('plt.png')
