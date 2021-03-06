@@ -27,8 +27,8 @@ parser.add_argument('--target', default=195, type=int,
                     help='Solved at target (default: 195)')
 parser.add_argument('--baseline', default=True, type=bool,
                     help='use reinforce with baseline (default: false)')
-parser.add_argument('--window-size', default=25, type=int,
-                    help='Window size to calculate variance (default: 10)')
+parser.add_argument('--window-size', default=100, type=int,
+                    help='Window size to calculate variance (default: 100)')
 
 
 def plot_rewards(reinforce, episode_rewards, mean_rewards, env_name, num_episodes):
@@ -53,7 +53,7 @@ def plot_variance(episode_rewards_reinforce, episode_rewards_baseline, env_name,
     plt.plot(windows,reinforce_var,label="Reinforce")
     plt.plot(windows, reinforce_baseline_var, label="Reinforce-Baseline")
     plt.ylabel("Variance")
-    plt.xlabel("window")
+    plt.xlabel("Episode")
     plt.legend()
     fig.savefig('variance.png')
 
