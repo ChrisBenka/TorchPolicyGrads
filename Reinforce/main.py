@@ -27,7 +27,7 @@ parser.add_argument('--target', default=195, type=int,
                     help='Solved at target (default: 195)')
 parser.add_argument('--baseline', default=True, type=bool,
                     help='use reinforce with baseline (default: false)')
-parser.add_argument('--window-size', default=10, type=int,
+parser.add_argument('--window-size', default=25, type=int,
                     help='Window size to calculate variance (default: 10)')
 
 
