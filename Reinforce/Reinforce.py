@@ -48,7 +48,7 @@ class Reinforce:
     def __call__(self, env, max_episodes, gamma, max_episode_length, target):
         running_reward = 0
         episode_rewards, mean_rewards = [], []
-        with tqdm.trange(1, max_episodes) as t:
+        with tqdm.trange(0, max_episodes) as t:
             for episode in t:
                 self.optim.zero_grad()
                 rewards, action_probs = self._run_episode(env, max_episode_length)

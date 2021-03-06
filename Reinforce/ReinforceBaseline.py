@@ -42,12 +42,12 @@ class ReinforceBaseline:
     def __call__(self, env, max_episodes, gamma, max_episode_length, target):
         running_reward = 0
         episode_rewards, mean_rewards = [], []
-        with tqdm.trange(1, max_episodes) as t:
+        with tqdm.trange(0, max_episodes) as t:
             for episode in t:
                 self.optim.zero_grad()
                 rewards, action_probs, values = self._run_episode(env, max_episode_length)
                 values = torch.squeeze(values)
-                discounted_rewards = compute_discounted_rewards(rewards, gamma,normalize_rewards=False)
+                discounted_rewards = compute_discounted_rewards(rewards, gamma, normalize_rewards=False)
                 loss = torch.mean(
                     compute_loss(action_probs, discounted_rewards, values) + huber_loss(discounted_rewards, values))
                 loss.backward()
