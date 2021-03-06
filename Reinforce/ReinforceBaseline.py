@@ -4,45 +4,39 @@ import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
 
+from Reinforce import compute_discounted_rewards
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+huber_loss = nn.SmoothL1Loss(reduction='sum')
 
 
 class Policy(nn.Module):
     def __init__(self, state_dim, n_actions, hidden_units):
         super(Policy, self).__init__()
         self.fc1 = nn.Linear(state_dim[0], hidden_units[0])
-        self.fc2 = nn.Linear(hidden_units[0], n_actions)
+        self.fc2 = nn.Linear(state_dim[0], hidden_units[0])
+        self.fc3 = nn.Linear(hidden_units[0], n_actions)
+        self.fc4 = nn.Linear(hidden_units[0], 1)
 
     def forward(self, inputs):
-        x = F.relu(self.fc1(inputs))
-        return self.fc2(x)
+        action_hidden = F.relu(self.fc1(inputs))
+        action_logits = self.fc3(action_hidden)
+        state_hidden = F.relu(self.fc2(inputs))
+        state_value = self.fc4(state_hidden)
+        return action_logits, state_value
 
 
-def compute_discounted_rewards(rewards, gamma, normalize_rewards=True):
-    discounted_rewards = []
-    gammas = torch.FloatTensor([pow(gamma, i) for i in range(len(rewards))])
-    for step in range(len(rewards)):
-        discounted_reward = torch.sum(rewards * gammas) if step == 0 \
-            else torch.sum(rewards[:-step] * gammas[:-step])
-        discounted_rewards.append(discounted_reward)
-    discounted_rewards = torch.stack(discounted_rewards)
-
-    if normalize_rewards:
-        discounted_rewards = (discounted_rewards - torch.mean(discounted_rewards)) / \
-                             torch.std(discounted_rewards)
-    return discounted_rewards.to(device)
-
-
-def compute_loss(action_probs, discounted_rewards):
+def compute_loss(action_probs, rewards, values):
     log_action_probs = torch.log(action_probs)
-    return -torch.sum(log_action_probs * discounted_rewards)
+    advs = rewards - values
+    return -torch.sum(log_action_probs * advs)
 
 
-class Reinforce:
+class ReinforceBaseline:
     def __init__(self, state_dim, n_actions, hidden_units, optim=optim.Adam, lr=1e-4):
         self.policy = Policy(state_dim, n_actions, hidden_units)
         self.policy.to(device)
-        self.optim = optim(params=self.policy.parameters(), lr=lr)
+        self.optim = optim(self.policy.parameters(), lr=lr)
         self.n_actions = n_actions
 
     def __call__(self, env, max_episodes, gamma, max_episode_length, target):
@@ -51,9 +45,11 @@ class Reinforce:
         with tqdm.trange(1, max_episodes) as t:
             for episode in t:
                 self.optim.zero_grad()
-                rewards, action_probs = self._run_episode(env, max_episode_length)
-                discounted_rewards = compute_discounted_rewards(rewards, gamma)
-                loss = compute_loss(action_probs, discounted_rewards)
+                rewards, action_probs, values = self._run_episode(env, max_episode_length)
+                values = torch.squeeze(values)
+                discounted_rewards = compute_discounted_rewards(rewards, gamma,normalize_rewards=False)
+                loss = torch.mean(
+                    compute_loss(action_probs, discounted_rewards, values) + huber_loss(discounted_rewards, values))
                 loss.backward()
                 self.optim.step()
 
@@ -69,11 +65,11 @@ class Reinforce:
         return episode_rewards, mean_rewards
 
     def _run_episode(self, env, max_episode_length):
-        rewards, action_probs = [], []
+        rewards, action_probs, state_values = [], [], []
         state = env.reset()
         for step in range(max_episode_length):
             state = torch.FloatTensor(state).to(device)
-            action_logits = self.policy(state)
+            action_logits, state_value = self.policy(state)
             distr = torch.distributions.Categorical(logits=action_logits)
             action = torch.squeeze(distr.sample([1])).cpu().detach().numpy()
             action_prob = distr.probs[action]
@@ -81,15 +77,17 @@ class Reinforce:
 
             rewards.append(reward)
             action_probs.append(action_prob)
+            state_values.append(state_value)
+
             if done:
                 break
-        return torch.Tensor(rewards), torch.stack(action_probs)
+        return torch.Tensor(rewards), torch.stack(action_probs), torch.stack(state_values)
 
     def demo(self, env):
         state = env.reset()
         while True:
             state = torch.FloatTensor(state).to(device)
-            action_logits = self.policy(state)
+            action_logits, _ = self.policy(state)
             distr = torch.distributions.Categorical(logits=action_logits)
             action = torch.squeeze(distr.sample([1])).cpu().detach().numpy()
             state, reward, done, _ = env.step(action)
