@@ -1,7 +1,7 @@
 import argparse
 
 from A3C import A3C
-from utils.plot import plot_rewards
+from utils.plot import plot_mean_rewards
 
 parser = argparse.ArgumentParser(description='A3C')
 parser.add_argument('--lr', type=float, default=.0025,
@@ -31,6 +31,6 @@ if __name__ == '__main__':
     agent = A3C(env_name=args.env_name, num_workers=args.num_workers, hidden_units=args.hidden_units, lr=args.lr)
     mean_episode_rewards = agent.train(args.seed, args.num_episodes, args.gamma,
                                        args.max_episode_length, args.target)
-    plot_rewards(agent, mean_episode_rewards, args.env_name, args.num_episodes)
+    plot_mean_rewards(agent, mean_episode_rewards, args.env_name, args.num_episodes)
     agent.test(args.seed)
 6

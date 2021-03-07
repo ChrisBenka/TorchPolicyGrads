@@ -13,7 +13,7 @@ def plot_rewards(agent, episode_rewards, mean_rewards, env_name, num_episodes):
     plt.legend()
     fig.savefig(f'{type(agent).__name__}-rewards.png')
 
-def plot_rewards(agent, mean_rewards, env_name, num_episodes):
+def plot_mean_rewards(agent, mean_rewards, env_name, num_episodes):
     episodes = np.arange(num_episodes)
     fig = plt.figure()
     plt.title(f"{type(agent).__name__}: {env_name} Rewards over {num_episodes} episodes")

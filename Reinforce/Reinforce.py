@@ -4,6 +4,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
 
+from utils.misc import compute_discounted_rewards
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -18,21 +20,6 @@ class Policy(nn.Module):
         return self.fc2(x)
 
 
-def compute_discounted_rewards(rewards, gamma, normalize_rewards=True):
-    discounted_rewards = []
-    gammas = torch.FloatTensor([pow(gamma, i) for i in range(len(rewards))])
-    for step in range(len(rewards)):
-        discounted_reward = torch.sum(rewards * gammas) if step == 0 \
-            else torch.sum(rewards[:-step] * gammas[:-step])
-        discounted_rewards.append(discounted_reward)
-    discounted_rewards = torch.stack(discounted_rewards)
-
-    if normalize_rewards:
-        discounted_rewards = (discounted_rewards - torch.mean(discounted_rewards)) / \
-                             torch.std(discounted_rewards)
-    return discounted_rewards.to(device)
-
-
 def compute_loss(action_probs, discounted_rewards):
     log_action_probs = torch.log(action_probs)
     return -torch.sum(log_action_probs * discounted_rewards)
@@ -45,14 +32,15 @@ class Reinforce:
         self.optim = optim(params=self.policy.parameters(), lr=lr)
         self.n_actions = n_actions
 
-    def __call__(self, env, max_episodes, gamma, max_episode_length, target):
+    def train(self, seed, env, max_episodes, gamma, max_episode_length):
+        torch.manual_seed(seed)
         running_reward = 0
         episode_rewards, mean_rewards = [], []
         with tqdm.trange(0, max_episodes) as t:
             for episode in t:
                 self.optim.zero_grad()
                 rewards, action_probs = self._run_episode(env, max_episode_length)
-                discounted_rewards = compute_discounted_rewards(rewards, gamma)
+                discounted_rewards = compute_discounted_rewards(rewards, gamma, device)
                 loss = compute_loss(action_probs, discounted_rewards)
                 loss.backward()
                 self.optim.step()
@@ -85,7 +73,8 @@ class Reinforce:
                 break
         return torch.Tensor(rewards), torch.stack(action_probs)
 
-    def demo(self, env):
+    def test(self, seed, env):
+        torch.manual_seed(seed)
         state = env.reset()
         while True:
             state = torch.FloatTensor(state).to(device)

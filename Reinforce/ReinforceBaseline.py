@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
 
-from Reinforce import compute_discounted_rewards
+from utils.misc import compute_discounted_rewards
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 huber_loss = nn.SmoothL1Loss(reduction='sum')
@@ -39,7 +39,7 @@ class ReinforceBaseline:
         self.optim = optim(self.policy.parameters(), lr=lr)
         self.n_actions = n_actions
 
-    def __call__(self, env, max_episodes, gamma, max_episode_length, target):
+    def train(self, env, max_episodes, gamma, max_episode_length):
         running_reward = 0
         episode_rewards, mean_rewards = [], []
         with tqdm.trange(0, max_episodes) as t:
@@ -47,7 +47,7 @@ class ReinforceBaseline:
                 self.optim.zero_grad()
                 rewards, action_probs, values = self._run_episode(env, max_episode_length)
                 values = torch.squeeze(values)
-                discounted_rewards = compute_discounted_rewards(rewards, gamma, normalize_rewards=False)
+                discounted_rewards = compute_discounted_rewards(rewards, gamma, device, normalize_rewards=False)
                 loss = torch.mean(
                     compute_loss(action_probs, discounted_rewards, values) + huber_loss(discounted_rewards, values))
                 loss.backward()
@@ -83,7 +83,7 @@ class ReinforceBaseline:
                 break
         return torch.Tensor(rewards), torch.stack(action_probs), torch.stack(state_values)
 
-    def demo(self, env):
+    def test(self, env):
         state = env.reset()
         while True:
             state = torch.FloatTensor(state).to(device)
