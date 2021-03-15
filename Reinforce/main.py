@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 
 from Reinforce import Reinforce
 from ReinforceBaseline import ReinforceBaseline
-from utils.plot import plot_rewards, rolling_window
+from Utils.plot import plot_rewards, rolling_window
 
 parser = argparse.ArgumentParser(description='Reinforce')
 parser.add_argument('--lr', type=float, default=.0025,
@@ -30,6 +30,8 @@ parser.add_argument('--baseline', default=True, type=bool,
                     help='use reinforce with baseline (default: false)')
 parser.add_argument('--window-size', default=100, type=int,
                     help='Window size to calculate variance (default: 100)')
+parser.add_argument('--max-grad-norm', type=float, default=50,
+                    help='value loss coefficient (default: 50)')
 
 
 def plot_variance(episode_rewards_reinforce, episode_rewards_baseline, env_name, window_size, num_episodes):
@@ -38,9 +40,8 @@ def plot_variance(episode_rewards_reinforce, episode_rewards_baseline, env_name,
     plt.title(f"{env_name} Variance (sliding window of {window_size} episodes) over {num_episodes} episodes")
     reinforce_var = np.var(rolling_window(np.array(episode_rewards_reinforce), window_size), -1)
     reinforce_baseline_var = np.var(rolling_window(np.array(episode_rewards_baseline), window_size), -1)
-    windows = np.arange(len(reinforce_var))
-    plt.plot(windows, reinforce_var, label="Reinforce")
-    plt.plot(windows, reinforce_baseline_var, label="Reinforce-Baseline")
+    plt.plot(np.arange(len(reinforce_var)), reinforce_var, label="Reinforce")
+    plt.plot(np.arange(len(reinforce_baseline_var)), reinforce_baseline_var, label="Reinforce-Baseline")
     plt.ylabel("Variance")
     plt.xlabel("Episode")
     plt.legend()
@@ -62,9 +63,9 @@ if __name__ == '__main__':
 
     for agent in [reinforce, reinforceBaseline]:
         episode_rewards, mean_rewards = agent.train(args.seed, env, args.num_episodes, args.gamma,
-                                                    args.max_episode_length)
+                                                    args.max_episode_length, args.max_grad_norm, args.target)
         agent_episode_rewards.append(episode_rewards)
-        plo(agent, episode_rewards, mean_rewards, args.env_name, args.num_episodes)
+        plot_rewards(agent, episode_rewards, mean_rewards, args.env_name, args.num_episodes)
         agent.test(args.seed, env)
 
     episode_rewards_reinforce, episode_rewards_baseline = agent_episode_rewards

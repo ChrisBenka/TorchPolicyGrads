@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
 
-from utils.misc import compute_discounted_rewards
+from Utils.misc import compute_discounted_rewards
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -32,17 +32,20 @@ class Reinforce:
         self.optim = optim(params=self.policy.parameters(), lr=lr)
         self.n_actions = n_actions
 
-    def train(self, seed, env, max_episodes, gamma, max_episode_length):
+    def train(self, seed, env, max_episodes, gamma, max_episode_length, max_grad_norm, target):
         torch.manual_seed(seed)
         running_reward = 0
         episode_rewards, mean_rewards = [], []
         with tqdm.trange(0, max_episodes) as t:
             for episode in t:
-                self.optim.zero_grad()
+
                 rewards, action_probs = self._run_episode(env, max_episode_length)
                 discounted_rewards = compute_discounted_rewards(rewards, gamma, device)
+
+                self.optim.zero_grad()
                 loss = compute_loss(action_probs, discounted_rewards)
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_grad_norm)
                 self.optim.step()
 
                 t.set_description(f"Episode {episode}")
@@ -53,6 +56,9 @@ class Reinforce:
 
                 mean_rewards.append(running_reward)
                 episode_rewards.append(episode_reward)
+
+                if running_reward >= target:
+                    break
 
         return episode_rewards, mean_rewards
 

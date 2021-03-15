@@ -3,7 +3,7 @@ import numpy as np
 
 
 def plot_rewards(agent, episode_rewards, mean_rewards, env_name, num_episodes):
-    episodes = np.arange(num_episodes)
+    episodes = np.arange(len(episode_rewards))
     fig = plt.figure()
     plt.title(f"{type(agent).__name__}: {env_name} Rewards over {num_episodes} episodes")
     plt.plot(episodes, episode_rewards, label="episode reward")

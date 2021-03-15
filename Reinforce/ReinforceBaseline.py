@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
 
-from utils.misc import compute_discounted_rewards
+from Utils.misc import compute_discounted_rewards
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 huber_loss = nn.SmoothL1Loss(reduction='sum')
@@ -28,7 +28,7 @@ class Policy(nn.Module):
 
 def compute_loss(action_probs, rewards, values):
     log_action_probs = torch.log(action_probs)
-    advs = rewards - values
+    advs = (rewards - values).detach()
     return -torch.sum(log_action_probs * advs)
 
 
@@ -39,17 +39,21 @@ class ReinforceBaseline:
         self.optim = optim(self.policy.parameters(), lr=lr)
         self.n_actions = n_actions
 
-    def train(self, env, max_episodes, gamma, max_episode_length):
+    def train(self, seed, env, max_episodes, gamma, max_episode_length, max_grad_norm, target):
+        torch.manual_seed(seed)
+        env.seed(seed)
         running_reward = 0
         episode_rewards, mean_rewards = [], []
         with tqdm.trange(0, max_episodes) as t:
             for episode in t:
-                self.optim.zero_grad()
+
                 rewards, action_probs, values = self._run_episode(env, max_episode_length)
                 values = torch.squeeze(values)
                 discounted_rewards = compute_discounted_rewards(rewards, gamma, device, normalize_rewards=False)
-                loss = torch.mean(
-                    compute_loss(action_probs, discounted_rewards, values) + huber_loss(discounted_rewards, values))
+
+                self.optim.zero_grad()
+                loss = compute_loss(action_probs, discounted_rewards, values) + huber_loss(discounted_rewards, values)
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_grad_norm)
                 loss.backward()
                 self.optim.step()
 
@@ -61,6 +65,9 @@ class ReinforceBaseline:
 
                 mean_rewards.append(running_reward)
                 episode_rewards.append(episode_reward)
+
+                if running_reward >= target:
+                    break
 
         return episode_rewards, mean_rewards
 
@@ -83,7 +90,8 @@ class ReinforceBaseline:
                 break
         return torch.Tensor(rewards), torch.stack(action_probs), torch.stack(state_values)
 
-    def test(self, env):
+    def test(self, seed, env):
+        torch.manual_seed(seed)
         state = env.reset()
         while True:
             state = torch.FloatTensor(state).to(device)
