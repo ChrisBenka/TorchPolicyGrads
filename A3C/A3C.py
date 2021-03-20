@@ -4,22 +4,30 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
+from EnvUtils.AtariGymWapper import AtariGymWrapper
 from SharedOptim import SharedAdam
+from PIL import Image
+
+PATH = "a3c_dict_model.pt"
+
 
 class ActorCriticNet(nn.Module):
-    def __init__(self, state_dim: list, n_actions: int):
+    def __init__(self, state_dim: int, n_actions: int):
         super(ActorCriticNet, self).__init__()
-        self.fc1 = nn.Linear(state_dim[0], 24)
-        self.fc2 = nn.Linear(state_dim[0], 48)
-        self.fc3 = nn.Linear(24, n_actions)
-        self.fc4 = nn.Linear(48, 1)
+        self.conv1 = nn.Conv2d(4, out_channels=16, kernel_size=8, stride=4, )
+        self.conv2 = nn.Conv2d(16, 32, 5, 2)
+        # (state_dim - 32)/2 + 1
+        self.fc1 = nn.Linear(2048, 256)
+        self.fc_v = nn.Linear(256, 1)
+        self.fc_actions = nn.Linear(256, n_actions)
 
     def forward(self, inputs: torch.Tensor):
-        action_hidden = F.hardtanh_(self.fc1(inputs))
-        action_logits = self.fc3(action_hidden)
-        state_hidden = F.hardtanh_(self.fc2(inputs))
-        state_value = self.fc4(state_hidden)
-        return action_logits, state_value
+        inputs = inputs.permute(0, 3, 1, 2)
+        hidden = F.relu(self.conv1(inputs))
+        hidden = F.relu(self.conv2(hidden))
+        hidden_flat = hidden.view(-1, 32 * 8 * 8)
+        hidden = F.relu(self.fc1(hidden_flat))
+        return self.fc_actions(hidden), self.fc_v(hidden),
 
     def update_from_model(self, model: nn.Module):
         self.load_state_dict(model.state_dict())
@@ -42,12 +50,13 @@ class ActorCriticNet(nn.Module):
         actor_loss = -(distr.log_prob(actions) * advs.detach().squeeze())
         return (critic_loss + actor_loss).mean()
 
+
 class Worker:
     def __init__(self, rank: int, seed: int, env: gym.Env, gamma: float, update_interval: int):
         self.rank = rank
         self.env = env
         self.env.seed(rank + seed)
-        state_dim = self.env.observation_space.shape
+        state_dim = 84
         n_actions = self.env.action_space.n
         self.gamma = gamma
         self.update_interval = update_interval
@@ -63,8 +72,8 @@ class Worker:
             episode_reward = 0
             state = self.env.reset()
             states, actions, rewards = [], [], []
-            for _ in range(max_steps):
-                action = self.t_actor_critic.get_action(torch.FloatTensor(state))
+            while True:
+                action = self.t_actor_critic.get_action(torch.FloatTensor(state[None]))
                 next_s, reward, done, _ = self.env.step(action)
 
                 if self.rank == 0:
@@ -80,15 +89,15 @@ class Worker:
                 if done or t_step_count % self.update_interval == 0 and global_episodes.value <= max_episodes:
                     if done:
                         state = self.env.reset()
-                        with mean_reward.get_lock():
+                        with mean_reward.get_lock(), global_episodes.get_lock():
                             mean_reward.value = mean_reward.value * .99 + episode_reward * .01
                             print(
-                                f"worker:{self.rank} running_reward:{int(mean_reward.value)}")
+                                f"episode: {global_episodes.value} worker:{self.rank} running_reward:{mean_reward.value}")
                             if mean_reward.value >= env_target:
                                 solved = True
                         R = 0
                     else:
-                        R = self.t_actor_critic(torch.FloatTensor(state))[1].detach().numpy()[0]
+                        R = self.t_actor_critic(torch.FloatTensor(state[None]))[1].detach().numpy()[0]
                     td_targets = []
                     for reward in rewards[::-1]:
                         R = reward + self.gamma * R
@@ -104,6 +113,9 @@ class Worker:
                     states, actions, rewards = [], [], []
                 else:
                     state = next_s
+
+                if done:
+                    break
 
             with global_episodes.get_lock():
                 global_episodes.value += 1
@@ -124,8 +136,8 @@ class A3C:
         self.env_name = env_name
         self.n_workers = n_workers
         self.lr = lr
-        self.env = gym.make(env_name)
-        self.state_dim = self.env.observation_space.shape
+        self.env = AtariGymWrapper(gym.make(env_name))
+        self.state_dim = 84
         self.n_actions = self.env.action_space.n
         self.global_network = ActorCriticNet(state_dim=self.state_dim, n_actions=self.n_actions)
         self.global_network.share_memory()
@@ -138,7 +150,7 @@ class A3C:
         self.env.seed(seed)
 
         for rank in range(self.n_workers):
-            worker = Worker(rank, seed, gym.make(self.env_name), gamma, update_interval)
+            worker = Worker(rank, seed, AtariGymWrapper(gym.make(self.env_name)), gamma, update_interval)
             p = mp.Process(target=worker.work,
                            args=(self.global_network, self.global_optim, global_episodes, reward_queue,
                                  mean_reward, max_episodes, max_steps, env_target))
@@ -158,16 +170,24 @@ class A3C:
                 break
         for p in processes:
             p.join()
+        torch.save(self.global_network.state_dict(), PATH)
         return episode_rewards, mean_rewards
 
     def test(self):
+        screen = self.env.render(mode='rgb_array')
+        im = Image.fromarray(screen)
+
+        images = [im]
+
         state = self.env.reset()
         episode_reward = 0
         while True:
-            action = self.global_network.get_action(torch.FloatTensor(state))
+            action = self.global_network.get_action(torch.FloatTensor(state[None]))
             state, reward, done, _ = self.env.step(action)
             episode_reward += reward
-            self.env.render()
+            screen = self.env.render(mode='rgb_array')
+            images.append(Image.fromarray(screen))
             if done:
                 print(f"episode_reward: {episode_reward}")
                 break
+        return images
