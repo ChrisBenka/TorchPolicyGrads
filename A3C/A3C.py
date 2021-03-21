@@ -1,12 +1,16 @@
+import datetime
+import time
+
 import gym
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.nn.functional as F
+from PIL import Image
 from torch.distributions import Categorical
+
 from EnvUtils.AtariGymWapper import AtariGymWrapper
 from SharedOptim import SharedAdam
-from PIL import Image
 
 PATH = "a3c_dict_model.pt"
 
@@ -27,24 +31,22 @@ class ActorCriticNet(nn.Module):
         hidden = F.relu(self.conv2(hidden))
         hidden_flat = hidden.view(-1, 32 * 8 * 8)
         hidden = F.relu(self.fc1(hidden_flat))
-        return self.fc_actions(hidden), self.fc_v(hidden),
+        return F.softmax(self.fc_actions(hidden),dim=-1), self.fc_v(hidden)
 
     def update_from_model(self, model: nn.Module):
         self.load_state_dict(model.state_dict())
 
     def get_action(self, obs):
         self.eval()
-        action_logits, _ = self.forward(obs)
-        probs = F.softmax(action_logits, dim=-1)
+        probs, _ = self.forward(obs)
         distr = Categorical(probs=probs)
         action = distr.sample([1]).numpy()[0]
         return action
 
     def compute_loss(self, states: torch.Tensor, actions: torch.Tensor, td_targets: torch.Tensor):
         self.train()
-        action_logits, state_values = self.forward(states)
+        probs, state_values = self.forward(states)
         advs = td_targets - state_values
-        probs = F.softmax(action_logits, dim=-1)
         distr = Categorical(probs=probs)
         critic_loss = advs ** 2
         actor_loss = -(distr.log_prob(actions) * advs.detach().squeeze())
@@ -62,11 +64,10 @@ class Worker:
         self.update_interval = update_interval
         self.t_actor_critic = ActorCriticNet(state_dim=state_dim, n_actions=n_actions)
 
-    def work(self, g_actor_critic: nn.Module, g_optim: SharedAdam, global_episodes: mp.Value, reward_queue: mp.Queue,
-             mean_reward: mp.Value, max_episodes: int, max_steps: int, env_target: int):
+    def work(self, g_actor_critic: nn.Module, g_optim: SharedAdam, t_start, t_end, reward_queue: mp.Queue,
+             mean_reward: mp.Value):
         print(f"starting {self.rank}")
         t_step_count = 0
-        solved = False
         while True:
             self.t_actor_critic.update_from_model(g_actor_critic)
             episode_reward = 0
@@ -86,15 +87,13 @@ class Worker:
                 actions.append(action)
                 rewards.append(reward)
 
-                if done or t_step_count % self.update_interval == 0 and global_episodes.value <= max_episodes:
+                if done or t_step_count % self.update_interval == 0:
                     if done:
                         state = self.env.reset()
-                        with mean_reward.get_lock(), global_episodes.get_lock():
+                        with mean_reward.get_lock():
                             mean_reward.value = mean_reward.value * .99 + episode_reward * .01
                             print(
-                                f"episode: {global_episodes.value} worker:{self.rank} running_reward:{mean_reward.value}")
-                            if mean_reward.value >= env_target:
-                                solved = True
+                                f"time_elapsed:{str(datetime.timedelta(seconds=time.time() - t_start))} worker:{self.rank} running_reward:{mean_reward.value}")
                         R = 0
                     else:
                         R = self.t_actor_critic(torch.FloatTensor(state[None]))[1].detach().numpy()[0]
@@ -117,15 +116,10 @@ class Worker:
                 if done:
                     break
 
-            with global_episodes.get_lock():
-                global_episodes.value += 1
-                if global_episodes.value > max_episodes:
-                    break
-                else:
-                    reward_queue.put(episode_reward)
-                if solved:
-                    print(f"Solved at {global_episodes.value}")
-                    break
+            if time.time() > t_end:
+                break
+            else:
+                reward_queue.put(episode_reward)
 
         reward_queue.put(None)
         print(f" exiting {self.rank}")
@@ -142,18 +136,21 @@ class A3C:
         self.global_network = ActorCriticNet(state_dim=self.state_dim, n_actions=self.n_actions)
         self.global_network.share_memory()
         self.global_optim = SharedAdam(params=self.global_network.parameters(), lr=lr)
+        self.global_optim.share_memory()
 
-    def train(self, seed, max_episodes, gamma, max_steps, env_target, update_interval):
-        global_episodes, reward_queue, mean_reward = mp.Value('i', 0), mp.Queue(), mp.Value('d', 0)
+    def train(self, seed, train_mins, gamma, update_interval):
+        reward_queue, mean_reward = mp.Queue(), mp.Value('d', 0)
         workers, processes = [], []
         torch.manual_seed(seed)
         self.env.seed(seed)
+        t_start = time.time()
+        t_end = t_start + 60 * train_mins
 
         for rank in range(self.n_workers):
             worker = Worker(rank, seed, AtariGymWrapper(gym.make(self.env_name)), gamma, update_interval)
             p = mp.Process(target=worker.work,
-                           args=(self.global_network, self.global_optim, global_episodes, reward_queue,
-                                 mean_reward, max_episodes, max_steps, env_target))
+                           args=(self.global_network, self.global_optim, t_start, t_end, reward_queue,
+                                 mean_reward))
             p.start()
             processes.append(p)
             workers.append(worker)
