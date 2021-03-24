@@ -12,11 +12,11 @@ parser.add_argument('--seed', type=int, default=13,
                     help='random seed (default: 13)')
 parser.add_argument('--train-mins', type=int, default=360,
                     help='number of minutes to spend training')
-parser.add_argument('--env-name', default='Pong-v0',
+parser.add_argument('--env-name', default='Breakout-v0',
                     help='environment to train.py on (default: Pong-v0)')
 parser.add_argument('--num-workers', default=16, type=int,
                     help='number of threads to be used during training (defaults: 20)')
-parser.add_argument('--update-interval', type=int, default=20,
+parser.add_argument('--update-interval', type=int, default=10,
                     help='interval to synchronize local to global (default:10)')
 
 if __name__ == '__main__':

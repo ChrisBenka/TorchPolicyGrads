@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 from torch.distributions import Categorical
-
+from EnvUtils.Atari import wrap_deepmind
 from EnvUtils.AtariGymWapper import AtariGymWrapper
 from SharedOptim import SharedAdam
 
@@ -58,7 +58,7 @@ class Worker:
         self.rank = rank
         self.env = env
         self.env.seed(rank + seed)
-        state_dim = 84
+        state_dim = self.env.observation_space.shape[0]
         n_actions = self.env.action_space.n
         self.gamma = gamma
         self.update_interval = update_interval
@@ -106,6 +106,7 @@ class Worker:
                                                             torch.Tensor(td_targets))
                     g_optim.zero_grad()
                     loss.backward()
+                    nn.utils.clip_grad_norm(self.t_actor_critic.parameters(), 45)
                     for t_param, g_param in zip(self.t_actor_critic.parameters(), g_actor_critic.parameters()):
                         g_param._grad = t_param.grad
                     g_optim.step()
@@ -130,8 +131,8 @@ class A3C:
         self.env_name = env_name
         self.n_workers = n_workers
         self.lr = lr
-        self.env = AtariGymWrapper(gym.make(env_name))
-        self.state_dim = 84
+        self.env = wrap_deepmind(gym.make(env_name))
+        self.state_dim = self.env.observation_space.shape[0]
         self.n_actions = self.env.action_space.n
         self.global_network = ActorCriticNet(state_dim=self.state_dim, n_actions=self.n_actions)
         self.global_network.share_memory()
@@ -147,7 +148,7 @@ class A3C:
         t_end = t_start + 60 * train_mins
 
         for rank in range(self.n_workers):
-            worker = Worker(rank, seed, AtariGymWrapper(gym.make(self.env_name)), gamma, update_interval)
+            worker = Worker(rank, seed, wrap_deepmind(gym.make(self.env_name)), gamma, update_interval)
             p = mp.Process(target=worker.work,
                            args=(self.global_network, self.global_optim, t_start, t_end, reward_queue,
                                  mean_reward))
